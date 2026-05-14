@@ -71,7 +71,7 @@ function ScraperUI() {
         
         let prefix = '';
         if (file.size === 0) {
-          prefix = 'no,name,rating,reviews,phone,website,maps_link\n';
+          prefix = 'no,name,rating,reviews,phone,website,plus_code,maps_link\n';
         }
         
         await writable.seek(file.size);
@@ -100,6 +100,7 @@ function ScraperUI() {
           esc(data.reviews.trim()),
           esc(data.phone.trim()),
           esc(data.website.trim()),
+          esc(data.plusCode ? data.plusCode.trim() : ''),
           esc(data.mapsLink.trim())
         ].join(',');
 

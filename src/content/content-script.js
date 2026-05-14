@@ -19,12 +19,17 @@ async function scrape(maxCount) {
   let scrapedUrls = new Set();
   
   while (isRunning) {
-    let cards = Array.from(document.querySelectorAll('div[role="article"]'));
+    let currentCards = Array.from(document.querySelectorAll('div[role="article"]'));
     
     // Scrape whatever is visible and new
-    for (let card of cards) {
+    for (let i = 0; i < currentCards.length; i++) {
       if (!isRunning) break;
       if (scrapedUrls.size >= maxResults) break;
+
+      // Re-fetch card by index to avoid Detached DOM Node errors when returning from details view
+      let refreshedCards = Array.from(document.querySelectorAll('div[role="article"]'));
+      if (i >= refreshedCards.length) break;
+      let card = refreshedCards[i];
 
       const mapsLinkEl = card.querySelector('a.hfpxzc');
       if (!mapsLinkEl) continue;
@@ -41,11 +46,29 @@ async function scrape(maxCount) {
       const phone = card.querySelector('.UsdlK')?.textContent || '';
       const website = card.querySelector('a[data-value="Website"]')?.getAttribute('href') || '';
       
+      // Navigate to Place Details to get Plus Code
+      mapsLinkEl.click();
+      await sleep(2500); // Wait for detail panel to render
+
+      let plusCode = '';
+      const plusCodeBtn = document.querySelector('button[aria-label*="Plus code:"]');
+      if (plusCodeBtn) {
+         plusCode = plusCodeBtn.getAttribute('aria-label') || '';
+         plusCode = plusCode.replace(/^Plus code:\s*/i, '').trim();
+      }
+
+      // Click "Back" to return to search feed
+      const backBtn = document.querySelector('button[aria-label="Back"]') || document.querySelector('button[jsaction*="back"]');
+      if (backBtn) {
+         backBtn.click();
+         await sleep(2000); // Wait for search feed to slide back in
+      }
+      
       scrapedUrls.add(mapsLink);
       
       chrome.runtime.sendMessage({
         action: 'SCRAPE_RESULT',
-        data: { name, rating, reviews, phone, website, mapsLink }
+        data: { name, rating, reviews, phone, website, plusCode, mapsLink }
       });
     }
 
@@ -54,7 +77,7 @@ async function scrape(maxCount) {
       break;
     }
 
-    if (cards.length === prevItems) {
+    if (currentCards.length === prevItems) {
       sameCount++;
     } else {
       sameCount = 0;
@@ -65,10 +88,14 @@ async function scrape(maxCount) {
       break;
     }
 
-    prevItems = cards.length;
+    prevItems = currentCards.length;
 
-    // Scroll more carefully to let lazy loading catch up properly
-    feed.scrollBy(0, 1500);
+    // Google Maps rebuilds the feed when navigating back from card details!
+    // We MUST re-fetch the container element explicitly otherwise scrollBy targets a detached, hidden DOM node.
+    const activeFeed = document.querySelector('div[role="feed"]');
+    if (activeFeed) {
+      activeFeed.scrollBy(0, 1500);
+    }
     await sleep(1500);
   }
 }
