@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Isp Scraper Extension",
+  "version": "1.0",
+  "description": "Scrape Internet Service Provider information near you.",
+
+  "permissions": ["activeTab", "sidePanel", "storage"],
+
+  "host_permissions": ["*://*.google.com/maps/*", "*://*.google.com/search*"],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["*://*.google.com/maps/*", "*://*.google.com/search*"],
+      "js": ["content/content-script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "side_panel": {
+    "default_path": "index.html"
+  },
+
+  "action": {
+    "default_title": "Open Scrapper",
+    "default_icon": "image.png"
+  },
+
+  "icons": {
+    "16": "image.png",
+    "48": "image.png",
+    "128": "image.png"
+  }
+}
