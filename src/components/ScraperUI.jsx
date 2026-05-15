@@ -28,6 +28,16 @@ function ScraperUI() {
         }],
         multiple: false
       });
+
+      // Proactively request Write permission during the user gesture!
+      if ((await handle.queryPermission({ mode: 'readwrite' })) !== 'granted') {
+          const status = await handle.requestPermission({ mode: 'readwrite' });
+          if (status !== 'granted') {
+              setError('Write permission is required to append data.');
+              return;
+          }
+      }
+
       fileHandleRef.current = handle;
       setFileName(handle.name);
       
@@ -38,18 +48,19 @@ function ScraperUI() {
       const newSet = new Set();
       let maxNo = 0;
       
-      // Parse expecting: no,name,rating,reviews,phone,website,maps_link
+      // Parse expecting: no,name,rating,reviews,phone,website,plus_code,maps_link
       for (const line of lines.slice(1)) {
         const matchLink = line.match(/"([^"]+)"\s*$/);
         if (matchLink && matchLink[1]) {
            newSet.add(matchLink[1]);
         }
         
-        const firstComma = line.indexOf(',');
-        if (firstComma > 0) {
-           const idStr = line.substring(0, firstComma);
-           const id = parseInt(idStr, 10);
-           if (!isNaN(id) && id > maxNo) maxNo = id;
+        const matchId = line.match(/^(\d+),/);
+        if (matchId) {
+           const id = parseInt(matchId[1], 10);
+           if (!isNaN(id) && id > maxNo) {
+             maxNo = id;
+           }
         }
       }
       duplicatesRef.current = newSet;
@@ -146,7 +157,11 @@ function ScraperUI() {
           chrome.tabs.onUpdated.removeListener(listener);
           // Small delay to ensure content script injects
           setTimeout(() => {
-            chrome.tabs.sendMessage(tabId, { action: 'START_SCRAPE', max: parseInt(maxResults, 10) });
+            chrome.tabs.sendMessage(tabId, { 
+              action: 'START_SCRAPE', 
+              max: parseInt(maxResults, 10),
+              existingLinks: Array.from(duplicatesRef.current)
+            });
           }, 2000);
         }
       };

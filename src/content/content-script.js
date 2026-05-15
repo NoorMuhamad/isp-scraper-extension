@@ -1,13 +1,18 @@
 let isRunning = false;
 let maxResults = 50;
+let globalUrls = new Set();
+let sessionSaved = 0;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function scrape(maxCount) {
+async function scrape(maxCount, existingLinks) {
   isRunning = true;
   maxResults = maxCount;
+  globalUrls = new Set(existingLinks || []);
+  sessionSaved = 0;
+  
   const feed = document.querySelector('div[role="feed"]');
   if (!feed) {
     chrome.runtime.sendMessage({ action: 'SCRAPE_ERROR', error: 'Could not find the results feed. Are you on a Google Maps search results page?' });
@@ -16,7 +21,6 @@ async function scrape(maxCount) {
 
   let prevItems = -1;
   let sameCount = 0;
-  let scrapedUrls = new Set();
   
   while (isRunning) {
     let currentCards = Array.from(document.querySelectorAll('div[role="article"]'));
@@ -24,7 +28,7 @@ async function scrape(maxCount) {
     // Scrape whatever is visible and new
     for (let i = 0; i < currentCards.length; i++) {
       if (!isRunning) break;
-      if (scrapedUrls.size >= maxResults) break;
+      if (sessionSaved >= maxResults) break;
 
       // Re-fetch card by index to avoid Detached DOM Node errors when returning from details view
       let refreshedCards = Array.from(document.querySelectorAll('div[role="article"]'));
@@ -35,7 +39,7 @@ async function scrape(maxCount) {
       if (!mapsLinkEl) continue;
       const mapsLink = mapsLinkEl.getAttribute('href');
       
-      if (scrapedUrls.has(mapsLink)) continue;
+      if (globalUrls.has(mapsLink)) continue;
       
       const nameEl = card.querySelector('.qBF1Pd');
       if (!nameEl) continue;
@@ -58,13 +62,17 @@ async function scrape(maxCount) {
       }
 
       // Click "Back" to return to search feed
-      const backBtn = document.querySelector('button[aria-label="Back"]') || document.querySelector('button[jsaction*="back"]');
+      const backBtn = document.querySelector('button[aria-label="Back"]') || document.querySelector('button[aria-label="Back to results"]') || document.querySelector('button[jsaction*="back"]');
       if (backBtn) {
          backBtn.click();
          await sleep(2000); // Wait for search feed to slide back in
+      } else if (window.location.href.includes('/place/')) {
+         window.history.back();
+         await sleep(2000); 
       }
       
-      scrapedUrls.add(mapsLink);
+      globalUrls.add(mapsLink);
+      sessionSaved++;
       
       chrome.runtime.sendMessage({
         action: 'SCRAPE_RESULT',
@@ -72,7 +80,7 @@ async function scrape(maxCount) {
       });
     }
 
-    if (scrapedUrls.size >= maxResults) {
+    if (sessionSaved >= maxResults) {
       chrome.runtime.sendMessage({ action: 'SCRAPE_FINISHED', reason: 'MAX_REACHED' });
       break;
     }
@@ -106,7 +114,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       sendResponse({ status: 'Already running' });
       return;
     }
-    scrape(request.max || 50);
+    scrape(request.max || 50, request.existingLinks || []);
     sendResponse({ status: 'Started' });
   } else if (request.action === 'STOP_SCRAPE') {
     isRunning = false;
