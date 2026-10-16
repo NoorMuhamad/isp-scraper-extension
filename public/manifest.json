@@ -1,34 +1,43 @@
 {
   "manifest_version": 3,
-  "name": "Isp Scraper Extension",
-  "version": "1.0",
-  "description": "Scrape Internet Service Provider information near you.",
-
-  "permissions": ["activeTab", "sidePanel", "storage"],
-
-  "host_permissions": ["*://*.google.com/maps/*", "*://*.google.com/search*"],
+  "name": "ISP Finder: Pakistan",
+  "version": "2.0.0",
+  "description": "Collects internet service providers from Google Maps for the Pakistani cities you enable, and sends them to your Google Sheet.",
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "unlimitedStorage",
+    "alarms",
+    "tabs",
+    "notifications"
+  ],
+  "host_permissions": [
+    "https://www.google.com/maps/*",
+    "https://script.google.com/*",
+    "https://script.googleusercontent.com/*"
+  ],
   "background": {
     "service_worker": "background/service-worker.js",
     "type": "module"
   },
-
   "content_scripts": [
     {
-      "matches": ["*://*.google.com/maps/*", "*://*.google.com/search*"],
-      "js": ["content/content-script.js"],
+      "matches": [
+        "https://www.google.com/maps/*"
+      ],
+      "js": [
+        "content/content-script.js"
+      ],
       "run_at": "document_idle"
     }
   ],
-
   "side_panel": {
     "default_path": "index.html"
   },
-
   "action": {
-    "default_title": "Open Scrapper",
+    "default_title": "Open ISP Finder",
     "default_icon": "image.png"
   },
-
   "icons": {
     "16": "image.png",
     "48": "image.png",

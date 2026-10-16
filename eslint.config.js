@@ -14,8 +14,18 @@ export default defineConfig([
       reactRefresh.configs.vite,
     ],
     languageOptions: {
-      globals: globals.browser,
+      // `chrome` is the extension API, available in every part of the extension.
+      globals: { ...globals.browser, ...globals.webextensions },
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
+  },
+  {
+    files: ['vite.config.js'],
+    languageOptions: { globals: globals.node },
+  },
+  {
+    // Google Apps Script runs in its own environment.
+    files: ['apps-script/**'],
+    languageOptions: { globals: { SpreadsheetApp: 'readonly', ContentService: 'readonly', LockService: 'readonly', PropertiesService: 'readonly' } },
   },
 ])
