@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-const KEYS = ["settings", "cities", "cityStats", "run", "sync", "errors", "recordCount"];
+const KEYS = ["settings", "cities", "cityStats", "run", "sync", "ownerSync", "errors", "recordCount"];
 
 /** Live view of the worker's state: re-reads whenever storage changes. */
 export function useStore() {

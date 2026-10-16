@@ -10,7 +10,8 @@
  *   run          { status: idle|running|paused, queue: [task], current, totalTasks, doneTasks, newThisRun, startedAt, lastSuccessfulRunAt }
  *   rec:<key>    one record per business; alias:<key> → primary key
  *   recordCount  number of unique businesses
- *   sync         { pending: [key], lastSyncAt, lastError, attempts, nextAttemptAt, added, updated }
+ *   sync         { pending: [key], lastSyncAt, lastError, attempts, nextAttemptAt, added, updated }  (Google Sheet)
+ *   ownerSync    the same, for the owner panel
  *   errors       last 100 errors, newest first
  *
  * The one hard rule: a city is scraped only while it is enabled. It is checked
@@ -46,6 +47,7 @@ async function ensureSetup() {
       ...saved,
       schedule: { ...DEFAULT_SETTINGS.schedule, ...(saved.schedule || {}) },
       sheet: { ...DEFAULT_SETTINGS.sheet, ...(saved.sheet || {}) },
+      owner: { ...DEFAULT_SETTINGS.owner, ...(saved.owner || {}) },
     };
     await store.set({
       cities,
@@ -53,6 +55,7 @@ async function ensureSetup() {
       run: await get("run", RUN_IDLE),
       cityStats: await get("cityStats", {}),
       sync: await get("sync", { pending: [], added: 0, updated: 0 }),
+      ownerSync: await get("ownerSync", { pending: [], added: 0, updated: 0 }),
       errors: await get("errors", []),
       recordCount: await get("recordCount", 0),
     });
@@ -80,6 +83,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === "watchdog") {
     void kick();
     void flushSync(false);
+    void flushOwner(false);
   }
   if (alarm.name === "schedule") {
     const run = await get("run", RUN_IDLE);
@@ -226,6 +230,7 @@ async function finishRun() {
     });
   });
   void flushSync(true);
+  void flushOwner(true);
 }
 
 async function afterTask(task, outcome) {
@@ -245,6 +250,7 @@ async function afterTask(task, outcome) {
         : {}),
     }));
     void flushSync(false);
+    void flushOwner(false);
     return;
   }
   if (outcome.kind === "aborted") {
@@ -461,8 +467,8 @@ async function savePlace(msg) {
     const writes = { [`rec:${primary}`]: record };
     for (const k of recordAliases(record)) writes[`alias:${k}`] = primary;
 
-    const [cityStats, run, sync, recordCount] = await Promise.all([
-      get("cityStats", {}), get("run", RUN_IDLE), get("sync", { pending: [] }), get("recordCount", 0),
+    const [cityStats, run, sync, ownerSync, recordCount] = await Promise.all([
+      get("cityStats", {}), get("run", RUN_IDLE), get("sync", { pending: [] }), get("ownerSync", { pending: [] }), get("recordCount", 0),
     ]);
     const stats = cityStats[msg.cityId] || { found: 0, failedKeywords: [] };
     if (!existing) {
@@ -483,12 +489,15 @@ async function savePlace(msg) {
     writes.cityStats = cityStats;
     if (!existing || recordChanged(existing, record)) {
       writes.sync = { ...sync, pending: [...new Set([...(sync.pending || []), primary])] };
+      writes.ownerSync = { ...ownerSync, pending: [...new Set([...(ownerSync.pending || []), primary])] };
     }
     await store.set(writes);
   });
   const sync = await get("sync", { pending: [] });
   const settings = await get("settings", DEFAULT_SETTINGS);
   if ((sync.pending || []).length >= (settings.sheet?.batchSize || 25)) void flushSync(false);
+  const ownerSync = await get("ownerSync", { pending: [] });
+  if ((ownerSync.pending || []).length >= (settings.owner?.batchSize || 50)) void flushOwner(false);
   return newRecord;
 }
 
@@ -573,6 +582,105 @@ async function testSheet(sheet) {
   return body;
 }
 
+// ── Owner panel sync ────────────────────────────────────────────────────────
+
+let ownerSyncing = false;
+const ownerBase = (url) => String(url || "").trim().replace(/\/+$/, "");
+
+/** The fields the owner panel's import accepts. */
+const forOwner = (r) => ({
+  name: r.name, phone: r.phone, description: r.description, category: r.category, address: r.address,
+  city: r.city, province: r.province, website: r.website, rating: r.rating, reviews: r.reviews,
+  lat: r.lat, lng: r.lng, plusCode: r.plusCode, mapsUrl: r.mapsUrl, placeId: r.placeId,
+  featureId: r.featureId, keyword: r.keyword, scrapedAt: r.scrapedAt,
+});
+
+/**
+ * Send pending records to the owner panel (POST {url}/prospects/import with
+ * the import key), in batches. Failures back off like the sheet sync.
+ */
+async function flushOwner(force) {
+  if (ownerSyncing) return;
+  const settings = await get("settings", DEFAULT_SETTINGS);
+  const { url, key, batchSize } = settings.owner || {};
+  if (!url || !key) return;
+  const state = await get("ownerSync", { pending: [] });
+  if (!state.pending?.length) return;
+  if (!force && state.nextAttemptAt && Date.now() < state.nextAttemptAt) return;
+
+  ownerSyncing = true;
+  try {
+    for (;;) {
+      const current = await get("ownerSync", { pending: [] });
+      const batch = (current.pending || []).slice(0, batchSize || 50);
+      if (!batch.length) break;
+      const stored = await store.get(batch.map((k) => `rec:${k}`));
+      const records = batch.map((k) => stored[`rec:${k}`]).filter(Boolean).map(forOwner);
+      const res = await fetch(`${ownerBase(url)}/prospects/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-import-key": key },
+        body: JSON.stringify({ records }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body?.ok) {
+        throw new Error(body?.message || body?.error || `Owner panel answered HTTP ${res.status}`);
+      }
+      await withLock(async () => {
+        const s = await get("ownerSync", { pending: [] });
+        const sent = new Set(batch);
+        await store.set({
+          ownerSync: {
+            ...s,
+            pending: (s.pending || []).filter((k) => !sent.has(k)),
+            added: (s.added || 0) + (body.added || 0),
+            updated: (s.updated || 0) + (body.updated || 0),
+            lastSyncAt: new Date().toISOString(),
+            lastError: "",
+            attempts: 0,
+            nextAttemptAt: 0,
+          },
+        });
+      });
+    }
+  } catch (error) {
+    await withLock(async () => {
+      const s = await get("ownerSync", { pending: [] });
+      const attempts = (s.attempts || 0) + 1;
+      await store.set({
+        ownerSync: {
+          ...s,
+          attempts,
+          lastError: error.message,
+          nextAttemptAt: Date.now() + Math.min(30000 * 2 ** (attempts - 1), 30 * 60000),
+        },
+      });
+    });
+    await logError(`Owner panel sync failed: ${error.message}`);
+  } finally {
+    ownerSyncing = false;
+  }
+}
+
+async function testOwner(owner) {
+  if (!owner?.url || !owner?.key) throw new Error("Paste the owner panel address and an import key first.");
+  const res = await fetch(`${ownerBase(owner.url)}/prospects/import/ping`, { headers: { "x-import-key": owner.key } });
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body?.ok) throw new Error(body?.message || `Owner panel answered HTTP ${res.status}`);
+  return body;
+}
+
+/** Queue every collected ISP for the owner panel (first connection, or a resend). */
+async function queueAllForOwner() {
+  const all = await store.get(null);
+  const keys = Object.keys(all).filter((k) => k.startsWith("rec:")).map((k) => k.slice(4));
+  await withLock(async () => {
+    const s = await get("ownerSync", { pending: [] });
+    await store.set({ ownerSync: { ...s, pending: [...new Set([...(s.pending || []), ...keys])], nextAttemptAt: 0 } });
+  });
+  void flushOwner(true);
+  return keys.length;
+}
+
 // ── Messages ────────────────────────────────────────────────────────────────
 
 async function handleCommand(msg) {
@@ -638,6 +746,13 @@ async function handleCommand(msg) {
     case "SYNC_NOW":
       await flushSync(true);
       return { sync: await get("sync", {}) };
+    case "OWNER_SYNC_NOW":
+      await flushOwner(true);
+      return { ownerSync: await get("ownerSync", {}) };
+    case "TEST_OWNER":
+      return await testOwner(msg.owner);
+    case "SEND_ALL_TO_OWNER":
+      return { queued: await queueAllForOwner() };
     case "CLEAR_ERRORS":
       await store.set({ errors: [] });
       return {};

@@ -29,7 +29,8 @@ async function exportCsv() {
 
 export default function Dashboard({ state, onError }) {
   const [busy, setBusy] = useState(false);
-  const { cities = {}, cityStats = {}, run = {}, sync = {}, errors = [], recordCount = 0, settings = {} } = state;
+  const { cities = {}, cityStats = {}, run = {}, sync = {}, ownerSync = {}, errors = [], recordCount = 0, settings = {} } = state;
+  const ownerConnected = !!(settings.owner?.url && settings.owner?.key);
   const all = Object.values(cities);
   const enabled = all.filter((c) => c.enabled).length;
   const failedCities = Object.values(cityStats).filter((s) => s.failedKeywords?.length).length;
@@ -102,6 +103,36 @@ export default function Dashboard({ state, onError }) {
             Last successful run: {formatWhen(run.lastSuccessfulRunAt)}
             {settings.schedule?.enabled ? ` · scheduled every ${settings.schedule.everyHours} h` : ""}
           </Typography>
+        </CardContent>
+      </Card>
+
+      <Card variant="outlined">
+        <CardContent>
+          <Typography variant="subtitle2" gutterBottom>Owner panel</Typography>
+          {ownerConnected ? (
+            <>
+              <Typography variant="body2" color="text.secondary">
+                {ownerSync.pending?.length || 0} waiting · {ownerSync.added || 0} new prospects · {ownerSync.updated || 0} updated · last sent{" "}
+                {formatWhen(ownerSync.lastSyncAt)}
+              </Typography>
+              {ownerSync.lastError ? (
+                <Alert severity="error" sx={{ mt: 1 }}>
+                  {ownerSync.lastError}
+                  {ownerSync.nextAttemptAt ? ` Retrying after ${new Date(ownerSync.nextAttemptAt).toLocaleTimeString()}.` : ""}
+                </Alert>
+              ) : null}
+            </>
+          ) : (
+            <Typography variant="body2" color="text.secondary">Not connected. Set it up in Settings.</Typography>
+          )}
+          <Stack direction="row" gap={1} sx={{ mt: 1 }} flexWrap="wrap">
+            <Button size="small" disabled={busy || !ownerConnected || !ownerSync.pending?.length} onClick={act("OWNER_SYNC_NOW")}>
+              Send now
+            </Button>
+            <Button size="small" disabled={busy || !ownerConnected || !recordCount} onClick={act("SEND_ALL_TO_OWNER")}>
+              Send all collected ISPs ({recordCount})
+            </Button>
+          </Stack>
         </CardContent>
       </Card>
 

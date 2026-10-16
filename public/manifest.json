@@ -14,7 +14,9 @@
   "host_permissions": [
     "https://www.google.com/maps/*",
     "https://script.google.com/*",
-    "https://script.googleusercontent.com/*"
+    "https://script.googleusercontent.com/*",
+    "https://internet-guru.com/*",
+    "https://www.internet-guru.com/*"
   ],
   "background": {
     "service_worker": "background/service-worker.js",

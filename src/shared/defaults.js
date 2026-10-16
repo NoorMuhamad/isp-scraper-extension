@@ -21,6 +21,8 @@ export const DEFAULT_SETTINGS = {
   refreshAfterDays: 30,
   schedule: { enabled: false, everyHours: 168 },
   sheet: { webhookUrl: "", token: "", sheetName: "ISPs", batchSize: 25 },
+  /** The Internet Guru owner panel: every ISP saved is also sent there as a prospect. */
+  owner: { url: "", key: "", batchSize: 50 },
 };
 
 export const RUN_IDLE = { status: "idle", queue: [], current: null, totalTasks: 0, doneTasks: 0, newThisRun: 0 };

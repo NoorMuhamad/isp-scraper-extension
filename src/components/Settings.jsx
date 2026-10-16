@@ -11,6 +11,7 @@ export default function Settings({ settings, onError }) {
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const setSheet = (patch) => setForm((f) => ({ ...f, sheet: { ...f.sheet, ...patch } }));
+  const setOwner = (patch) => setForm((f) => ({ ...f, owner: { ...f.owner, ...patch } }));
 
   const toSave = () => ({
     keywords: [...new Set(form.keywordsText.split("\n").map((k) => k.trim()).filter(Boolean))],
@@ -21,6 +22,7 @@ export default function Settings({ settings, onError }) {
     refreshAfterDays: num(form.refreshAfterDays, 0, 365),
     schedule: { enabled: !!form.schedule.enabled, everyHours: num(form.schedule.everyHours, 1, 24 * 60) },
     sheet: { ...form.sheet, webhookUrl: form.sheet.webhookUrl.trim(), batchSize: num(form.sheet.batchSize, 1, 200) },
+    owner: { ...form.owner, url: form.owner.url.trim().replace(/\/+$/, ""), key: form.owner.key.trim(), batchSize: num(form.owner.batchSize, 1, 200) },
   });
 
   const save = async () => {
@@ -31,6 +33,15 @@ export default function Settings({ settings, onError }) {
       setNotice({ severity: "success", text: "Saved." });
     } catch (e) {
       onError(e.message);
+    }
+  };
+
+  const testOwner = async () => {
+    try {
+      const res = await command("TEST_OWNER", { owner: toSave().owner });
+      setNotice({ severity: "success", text: `Connected to the owner panel (key “${res.key}”).` });
+    } catch (e) {
+      setNotice({ severity: "error", text: e.message });
     }
   };
 
@@ -83,6 +94,18 @@ export default function Settings({ settings, onError }) {
       <Typography variant="caption" color="text.secondary">
         Scheduled runs happen only while Chrome is open, and only for enabled cities.
       </Typography>
+
+      <Typography variant="subtitle2">Owner panel</Typography>
+      <TextField size="small" label="Owner panel address" placeholder="https://internet-guru.com/owner" value={form.owner.url} onChange={(e) => setOwner({ url: e.target.value })} />
+      <TextField size="small" label="Import key" type="password" value={form.owner.key} onChange={(e) => setOwner({ key: e.target.value })} />
+      <Typography variant="caption" color="text.secondary">
+        In the owner panel: Prospects → Connect extension. Every ISP saved here is then sent there as a prospect.
+        After connecting, use “Send all collected ISPs” on the Dashboard for the ones found before.
+      </Typography>
+      <Stack direction="row" gap={1}>
+        <Button variant="contained" onClick={save}>Save settings</Button>
+        <Button onClick={testOwner}>Test owner panel connection</Button>
+      </Stack>
 
       <Typography variant="subtitle2">Google Sheet</Typography>
       <TextField size="small" label="Apps Script web app URL" value={form.sheet.webhookUrl} onChange={(e) => setSheet({ webhookUrl: e.target.value })} />
