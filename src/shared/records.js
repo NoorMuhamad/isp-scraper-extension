@@ -136,3 +136,35 @@ export function toCsv(records) {
   for (const r of records) lines.push(CSV_COLUMNS.map(([k]) => cell(r[k])).join(","));
   return lines.join("\r\n");
 }
+
+// ── Is this listing an ISP? ─────────────────────────────────────────────────
+// Google Maps answers "internet provider in <city>" with SEO agencies,
+// software houses, computer shops and the like. Only ISPs are kept. The same
+// rules run in the owner backend (prospects/isp-check.ts): keep the two alike.
+
+/** Google categories that mean an ISP. */
+const ISP_CATEGORIES = /^(internet service provider|cable company|internet service|broadband provider|wireless internet service provider)$/i;
+/** Categories an ISP is sometimes filed under: kept only when the name says ISP too. */
+const MAYBE_CATEGORIES = /^(|wi-?fi spot|telecommunications|telecommunications service provider|telecommunications company|telecommunications contractor|cable tv|satellite communication service|communications|store|service establishment|corporate office)$/i;
+/** Words in a name that say ISP. */
+const ISP_NAME = /internet|broad\s?band|\bisp\b|isp\b|fib(?:er|re)|ftth|gpon|wi-?fi|wireless|\bnet\b|net\s?works?|cable|cabel|\bnbb\b|cyber\s?net/i;
+/** Words in a name that say it is something else, even when Google files it as an ISP. */
+const NOT_ISP_NAME =
+  /\bseo\b|marketing|marketer|digital agency|ads agency|web\s?(?:site)?\s?(?:design|develop)|website|developer|hosting|domain|software|freelanc|mail\s?box|temp\s?mail|converter|\bhtml\b|\bxml\b|app development|graphic|printing|photo\s?stat|training|institute|academy|course|school|college|mobile (?:shop|accessories|zone)|laptop|coworking|incubator/i;
+/** Mobile-network franchises (Zong, Jazz...) unless the name also says internet/fiber. */
+const MOBILE_FRANCHISE = /\b(?:zong|jazz|telenor|ufone|mobilink|onic)\b|franchise/i;
+
+/** { isp, reason }: whether a cleaned record is an ISP, and why not. */
+export function ispCheck(r) {
+  const name = String(r.name || "").trim();
+  const category = String(r.category || "").trim();
+  if (!name || /^results?$/i.test(name)) return { isp: false, reason: "No business name" };
+  if (NOT_ISP_NAME.test(name)) return { isp: false, reason: `Name looks like a non-ISP (${category || "no category"})` };
+  const ispName = ISP_NAME.test(name);
+  if (MOBILE_FRANCHISE.test(name) && !/internet|broad\s?band|fib(?:er|re)|wi-?fi/i.test(name)) {
+    return { isp: false, reason: "Mobile network franchise" };
+  }
+  if (ISP_CATEGORIES.test(category)) return { isp: true, reason: "" };
+  if (MAYBE_CATEGORIES.test(category) && ispName) return { isp: true, reason: "" };
+  return { isp: false, reason: category ? `Category “${category}” is not an ISP` : "No category and the name doesn't say ISP" };
+}

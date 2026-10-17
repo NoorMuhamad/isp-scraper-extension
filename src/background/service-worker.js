@@ -9,7 +9,9 @@
  *   cityStats    { [cityId]: { status, found, newLastRun, updatedLastRun, totalTasks, doneTasks, lastRunAt, lastError, failedKeywords } }
  *   run          { status: idle|running|paused, queue: [task], current, totalTasks, doneTasks, newThisRun, startedAt, lastSuccessfulRunAt }
  *   rec:<key>    one record per business; alias:<key> → primary key
- *   recordCount  number of unique businesses
+ *   recordCount  number of unique businesses (ISPs only)
+ *   notIsp       { [featureId|placeId]: { name, category, reason, at } }  listings that are not ISPs: never saved, not opened again
+ *   notIspCount  how many of those
  *   sync         { pending: [key], lastSyncAt, lastError, attempts, nextAttemptAt, added, updated }  (Google Sheet)
  *   ownerSync    the same, for the owner panel
  *   errors       last 100 errors, newest first
@@ -20,7 +22,7 @@
  */
 import { CITIES } from "../shared/cities.js";
 import { DEFAULT_SETTINGS, RUN_IDLE } from "../shared/defaults.js";
-import { cleanPlace, mergeRecord, recordAliases, recordChanged } from "../shared/records.js";
+import { cleanPlace, ispCheck, mergeRecord, recordAliases, recordChanged } from "../shared/records.js";
 
 const store = chrome.storage.local;
 const get = async (key, fallback) => (await store.get(key))[key] ?? fallback;
@@ -142,6 +144,7 @@ async function startRun(cityIds, mode = "manual", keywords = null) {
           doneTasks: 0,
           newLastRun: 0,
           updatedLastRun: 0,
+          notIspLastRun: 0,
           lastError: "",
           failedKeywords: keywords ? prev.failedKeywords.filter((k) => !keywords.includes(k)) : [],
         };
@@ -158,6 +161,7 @@ async function startRun(cityIds, mode = "manual", keywords = null) {
         totalTasks: (fresh ? 0 : run.totalTasks) + count,
         doneTasks: fresh ? 0 : run.doneTasks,
         newThisRun: fresh ? 0 : run.newThisRun,
+        notIspThisRun: fresh ? 0 : run.notIspThisRun || 0,
         startedAt: fresh ? new Date().toISOString() : run.startedAt,
         lastSuccessfulRunAt: run.lastSuccessfulRunAt,
         hadErrors: fresh ? false : run.hadErrors,
@@ -369,6 +373,8 @@ async function freshIds(refreshAfterDays) {
     if (rec.featureId) ids.push(rec.featureId);
     if (rec.placeId) ids.push(rec.placeId);
   }
+  // Listings found not to be ISPs are never opened again.
+  ids.push(...Object.keys(all.notIsp || {}));
   return ids;
 }
 
@@ -455,6 +461,28 @@ async function savePlace(msg) {
     if (!city) return;
     const fresh = cleanPlace(msg.place, city, msg.keyword);
     if (!fresh.name) return;
+
+    // Only ISPs are kept. The rest are remembered (by id) so they aren't opened again.
+    const check = ispCheck(fresh);
+    if (!check.isp) {
+      const [notIsp, notIspCount, cityStats, run] = await Promise.all([
+        get("notIsp", {}), get("notIspCount", 0), get("cityStats", {}), get("run", RUN_IDLE),
+      ]);
+      const entry = { name: fresh.name, category: fresh.category, reason: check.reason, at: fresh.scrapedAt };
+      const ids = [fresh.featureId, fresh.placeId].filter(Boolean);
+      const known = ids.some((id) => notIsp[id]);
+      for (const id of ids) notIsp[id] = entry;
+      const stats = cityStats[msg.cityId] || { found: 0, failedKeywords: [] };
+      stats.notIspLastRun = (stats.notIspLastRun || 0) + 1;
+      cityStats[msg.cityId] = stats;
+      await store.set({
+        notIsp,
+        notIspCount: known ? notIspCount : notIspCount + 1,
+        cityStats,
+        run: { ...run, notIspThisRun: (run.notIspThisRun || 0) + 1 },
+      });
+      return;
+    }
 
     // Find the business under any key it may have been stored with before.
     const aliases = recordAliases(fresh);
@@ -670,6 +698,42 @@ async function testOwner(owner) {
 }
 
 /** Queue every collected ISP for the owner panel (first connection, or a resend). */
+/** Records saved before the ISP check: the ones that fail it are moved to the not-ISP list. */
+async function removeNonIsps() {
+  let removed = 0;
+  await withLock(async () => {
+    const all = await store.get(null);
+    const notIsp = all.notIsp || {};
+    const drop = [];
+    let count = all.notIspCount || 0;
+    for (const [key, rec] of Object.entries(all)) {
+      if (!key.startsWith("rec:")) continue;
+      const check = ispCheck(rec);
+      if (check.isp) continue;
+      drop.push(key);
+      for (const [k, v] of Object.entries(all)) if (k.startsWith("alias:") && v === key.slice(4)) drop.push(k);
+      for (const id of [rec.featureId, rec.placeId].filter(Boolean)) notIsp[id] = { name: rec.name, category: rec.category, reason: check.reason, at: new Date().toISOString() };
+      count += 1;
+      removed += 1;
+    }
+    if (!removed) return;
+    const gone = new Set(drop.filter((k) => k.startsWith("rec:")).map((k) => k.slice(4)));
+    const keepPending = (s) => ({ ...s, pending: (s?.pending || []).filter((k) => !gone.has(k)) });
+    const cityStats = all.cityStats || {};
+    for (const key of gone) {
+      const cityId = Object.keys(cityStats).find((id) => all.cities?.[id]?.name === all[`rec:${key}`]?.city);
+      if (cityId && cityStats[cityId].found) cityStats[cityId].found -= 1;
+    }
+    await store.remove(drop);
+    await store.set({
+      notIsp, notIspCount: count, cityStats,
+      recordCount: Math.max(0, (all.recordCount || 0) - removed),
+      sync: keepPending(all.sync), ownerSync: keepPending(all.ownerSync),
+    });
+  });
+  return removed;
+}
+
 async function queueAllForOwner() {
   const all = await store.get(null);
   const keys = Object.keys(all).filter((k) => k.startsWith("rec:")).map((k) => k.slice(4));
@@ -751,6 +815,8 @@ async function handleCommand(msg) {
       return { ownerSync: await get("ownerSync", {}) };
     case "TEST_OWNER":
       return await testOwner(msg.owner);
+    case "REMOVE_NON_ISPS":
+      return { removed: await removeNonIsps() };
     case "SEND_ALL_TO_OWNER":
       return { queued: await queueAllForOwner() };
     case "CLEAR_ERRORS":

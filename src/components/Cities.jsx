@@ -100,6 +100,7 @@ export default function Cities({ state, onError }) {
                     </Stack>
                     <Typography variant="caption" color="text.secondary" component="div" sx={{ pl: 5 }}>
                       {s.found || 0} ISPs found · {s.newLastRun || 0} new last run
+                      {s.notIspLastRun ? ` · ${s.notIspLastRun} not ISPs skipped` : ""}
                       {s.totalTasks && ["queued", "running", "paused"].includes(s.status) ? ` · ${s.doneTasks || 0}/${s.totalTasks} searches` : ""}
                       {" · "}last run {formatWhen(s.lastRunAt)}
                     </Typography>

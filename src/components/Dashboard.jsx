@@ -29,7 +29,8 @@ async function exportCsv() {
 
 export default function Dashboard({ state, onError }) {
   const [busy, setBusy] = useState(false);
-  const { cities = {}, cityStats = {}, run = {}, sync = {}, ownerSync = {}, errors = [], recordCount = 0, settings = {} } = state;
+  const [cleanup, setCleanup] = useState(null);
+  const { cities = {}, cityStats = {}, run = {}, sync = {}, ownerSync = {}, errors = [], recordCount = 0, notIspCount = 0, settings = {} } = state;
   const ownerConnected = !!(settings.owner?.url && settings.owner?.key);
   const all = Object.values(cities);
   const enabled = all.filter((c) => c.enabled).length;
@@ -57,7 +58,41 @@ export default function Dashboard({ state, onError }) {
         <Stat label="Unique ISPs" value={recordCount} />
         <Stat label="New this run" value={run.newThisRun || 0} />
         <Stat label="Failed cities" value={failedCities} />
+        <Stat label="Not ISPs skipped" value={notIspCount} />
+        <Stat label="Skipped this run" value={run.notIspThisRun || 0} />
       </Box>
+
+      <Card variant="outlined">
+        <CardContent>
+          <Typography variant="subtitle2" gutterBottom>ISPs only</Typography>
+          <Typography variant="body2" color="text.secondary">
+            Only internet service providers are kept. SEO and marketing agencies, software houses, computer and mobile shops,
+            web hosts and mobile-network franchises are skipped, and not opened again.
+          </Typography>
+          {cleanup != null ? (
+            <Alert severity={cleanup ? "success" : "info"} sx={{ mt: 1 }} onClose={() => setCleanup(null)}>
+              {cleanup ? `Removed ${cleanup} non-ISP listing${cleanup === 1 ? "" : "s"} collected earlier.` : "Everything collected is an ISP."}
+            </Alert>
+          ) : null}
+          <Button
+            size="small"
+            sx={{ mt: 1 }}
+            disabled={busy || !recordCount}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                setCleanup((await command("REMOVE_NON_ISPS")).removed);
+              } catch (error) {
+                onError(error.message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Remove non-ISPs collected earlier
+          </Button>
+        </CardContent>
+      </Card>
 
       <Card variant="outlined">
         <CardContent>
