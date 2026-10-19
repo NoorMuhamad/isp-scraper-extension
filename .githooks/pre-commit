@@ -1,0 +1,17 @@
+#!/bin/sh
+# Checks run before every commit (lint the changed files).
+# Turned on once per clone with: git config core.hooksPath .githooks
+# Skip only in an emergency: git commit --no-verify
+set -e
+cd "$(git rev-parse --show-toplevel)"
+
+# Only the files in this commit that the checks care about.
+staged=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^src/.*\.(js|jsx)$' || true)
+if [ -z "$staged" ]; then
+  exit 0
+fi
+
+echo "pre-commit: lint the changed files"
+npx --no-install eslint $staged
+
+echo "pre-commit: all checks passed"
